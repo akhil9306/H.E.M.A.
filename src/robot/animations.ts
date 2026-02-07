@@ -312,14 +312,19 @@ export async function lookAtTarget(
   }
 }
 
+export interface GraspResult {
+  message: string;
+  side: "left" | "right";
+}
+
 // --- Grasp object with smooth IK-approximated reach ---
 export async function graspAnimation(
   parts: RobotParts,
   objectName: GraspableObject,
   currentAngles: Record<JointName, number>
-): Promise<string> {
+): Promise<GraspResult> {
   const obj = OBJECT_POSITIONS[objectName];
-  if (!obj) return `Unknown object: ${objectName}`;
+  if (!obj) return { message: `Unknown object: ${objectName}`, side: "right" };
 
   // Look at the object first
   const headPan = Math.atan2(obj.x, obj.z - 0.5) * (180 / Math.PI);
@@ -330,10 +335,10 @@ export async function graspAnimation(
 
   // Choose arm based on object side
   const useRight = obj.x >= 0;
-  const armPrefix = useRight ? "right" : "left";
-  const shoulderKey = `${armPrefix}Shoulder` as JointName;
-  const elbowKey = `${armPrefix}Elbow` as JointName;
-  const fingersKey = `${armPrefix}Fingers` as JointName;
+  const side: "left" | "right" = useRight ? "right" : "left";
+  const shoulderKey = `${side}Shoulder` as JointName;
+  const elbowKey = `${side}Elbow` as JointName;
+  const fingersKey = `${side}Fingers` as JointName;
 
   // Calculate reach angles using simple 2-link IK approximation
   const dx = obj.x;
@@ -349,7 +354,7 @@ export async function graspAnimation(
     smoothSetJoint(parts, elbowKey, elbowAngle * 0.5, 300, currentAngles),
   ]);
 
-  // Phase 2: Full extension
+  // Phase 2: Full extension toward the object
   await Promise.all([
     smoothSetJoint(parts, shoulderKey, shoulderAngle, 300, currentAngles),
     smoothSetJoint(parts, elbowKey, elbowAngle, 300, currentAngles),
@@ -358,19 +363,13 @@ export async function graspAnimation(
   // Phase 3: Close fingers to grasp
   await smoothSetJoint(parts, fingersKey, 80, 300, currentAngles);
 
-  // Phase 4: Lift slightly
+  // Phase 4: Lift arm up with the object
   await Promise.all([
-    smoothSetJoint(
-      parts,
-      shoulderKey,
-      shoulderAngle + 20,
-      300,
-      currentAngles
-    ),
-    smoothSetJoint(parts, elbowKey, elbowAngle - 10, 300, currentAngles),
+    smoothSetJoint(parts, shoulderKey, -40, 500, currentAngles),
+    smoothSetJoint(parts, elbowKey, 60, 500, currentAngles),
   ]);
 
-  return `Grasped ${obj.color} ${objectName}`;
+  return { message: `Grasped ${obj.color} ${objectName}`, side };
 }
 
 // --- Release object ---

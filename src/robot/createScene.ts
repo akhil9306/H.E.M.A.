@@ -7,6 +7,7 @@ export interface SceneSetup {
   renderer: THREE.WebGLRenderer;
   visionRenderer: THREE.WebGLRenderer;
   tableObjects: THREE.Mesh[];
+  objectMap: Record<string, THREE.Mesh>;
 }
 
 export function createScene(
@@ -128,16 +129,17 @@ export function createScene(
   ground.receiveShadow = true;
   scene.add(ground);
 
-  const tableObjects = createTableWithObjects(scene);
+  const { objects: tableObjects, objectMap } = createTableWithObjects(scene);
 
-  return { scene, camera, renderer, visionRenderer, tableObjects };
+  return { scene, camera, renderer, visionRenderer, tableObjects, objectMap };
 }
 
-function createTableWithObjects(scene: THREE.Scene): THREE.Mesh[] {
+function createTableWithObjects(scene: THREE.Scene): { objects: THREE.Mesh[]; objectMap: Record<string, THREE.Mesh> } {
   const tableX = 0;
   const tableZ = 1.8;
   const tableHeight = 2.2;
   const objects: THREE.Mesh[] = [];
+  const objectMap: Record<string, THREE.Mesh> = {};
 
   // Table top
   const tableTop = new THREE.Mesh(
@@ -176,6 +178,7 @@ function createTableWithObjects(scene: THREE.Scene): THREE.Mesh[] {
   cube.castShadow = true;
   scene.add(cube);
   objects.push(cube);
+  objectMap["cube"] = cube;
 
   // Sphere (Blue)
   const sphere = new THREE.Mesh(
@@ -186,6 +189,7 @@ function createTableWithObjects(scene: THREE.Scene): THREE.Mesh[] {
   sphere.castShadow = true;
   scene.add(sphere);
   objects.push(sphere);
+  objectMap["sphere"] = sphere;
 
   // Cylinder (Green)
   const cylinder = new THREE.Mesh(
@@ -196,6 +200,7 @@ function createTableWithObjects(scene: THREE.Scene): THREE.Mesh[] {
   cylinder.castShadow = true;
   scene.add(cylinder);
   objects.push(cylinder);
+  objectMap["cylinder"] = cylinder;
 
   // Cuboid (Yellow)
   const cuboid = new THREE.Mesh(
@@ -206,6 +211,7 @@ function createTableWithObjects(scene: THREE.Scene): THREE.Mesh[] {
   cuboid.castShadow = true;
   scene.add(cuboid);
   objects.push(cuboid);
+  objectMap["cuboid"] = cuboid;
 
   // Cone (Magenta)
   const cone = new THREE.Mesh(
@@ -216,6 +222,7 @@ function createTableWithObjects(scene: THREE.Scene): THREE.Mesh[] {
   cone.castShadow = true;
   scene.add(cone);
   objects.push(cone);
+  objectMap["cone"] = cone;
 
   // Torus (Cyan)
   const torus = new THREE.Mesh(
@@ -227,6 +234,7 @@ function createTableWithObjects(scene: THREE.Scene): THREE.Mesh[] {
   torus.castShadow = true;
   scene.add(torus);
   objects.push(torus);
+  objectMap["torus"] = torus;
 
   // Octahedron (Orange)
   const octa = new THREE.Mesh(
@@ -238,7 +246,7 @@ function createTableWithObjects(scene: THREE.Scene): THREE.Mesh[] {
   scene.add(octa);
   objects.push(octa);
 
-  return objects;
+  return { objects, objectMap };
 }
 
 export function setupMouseControls(
