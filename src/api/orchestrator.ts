@@ -30,7 +30,7 @@ const orchestratorTools = {
       parameters: {
         type: SchemaType.OBJECT,
         properties: {
-          workerId: { type: SchemaType.NUMBER, description: "Worker robot ID (0 or 1)" },
+          workerId: { type: SchemaType.NUMBER, description: "Worker robot ID (0-4)" },
           stepId: { type: SchemaType.STRING, description: "ID of the manufacturing step" },
         },
         required: ["workerId", "stepId"],
@@ -42,7 +42,7 @@ const orchestratorTools = {
       parameters: {
         type: SchemaType.OBJECT,
         properties: {
-          workerId: { type: SchemaType.NUMBER, description: "Worker robot ID (0 or 1)" },
+          workerId: { type: SchemaType.NUMBER, description: "Worker robot ID (0-4)" },
           machineId: {
             type: SchemaType.STRING,
             enum: ["sheetStock", "cutter", "roller", "press", "welder"],
@@ -123,21 +123,25 @@ FACTORY MACHINES (positioned left to right):
 4. Frustrum Press (press) - Forms conical/frustrum transition pieces. Params: topRadius (0.2-1.0m), bottomRadius (0.3-1.2m), height (0.3-1.5m)
 5. Welding Station (welder) - Welds seams and joins pipe sections
 
-WORKERS: 2 robots (Worker 0 and Worker 1) that can walk between machines, carry materials, and operate machines.
+WORKERS: 5 robots with specialized roles:
+- Worker 0 (Transporter) - Stationed at Sheet Stock. Responsible for picking up materials, carrying them between machines, and storing finished pipes in the pipe rack.
+- Worker 1 (Cutter Operator) - Stationed at Guillotine Cutter. Operates the cutter with a lever-pull motion.
+- Worker 2 (Roller Operator) - Stationed at 3-Roller Bender. Guides sheets through the rollers.
+- Worker 3 (Press Operator) - Stationed at Frustrum Press. Operates the press controls.
+- Worker 4 (Welder) - Stationed at Welding Station. Performs welding with torch sweep motions.
+
+PIPE RACK: Located after the welding station. Stores completed pipe segments in V-shaped cradles (capacity: 5 pipes).
 
 MANUFACTURING PROCESS:
-For each cylinder section: fetch sheet → cut to size → bend on roller → weld longitudinal seam
-For each frustrum section: fetch sheet → cut to size → press into frustrum → weld seam
-Final assembly: weld all sections together at welding station
+For each segment: Worker 0 fetches sheet → carries to cutter → Worker 1 cuts → Worker 0 carries to roller/press → Worker 2/3 operates → Worker 0 carries to welder → Worker 4 welds → Worker 0 stores in pipe rack.
+Final assembly: Worker 0 retrieves from rack → Worker 4 welds sections together → Worker 0 stores back.
 
 WORKFLOW:
 1. When you receive a pipe specification, first call planManufacturing to acknowledge and summarize the plan
 2. The frontend will provide you with pre-computed manufacturing steps
-3. Coordinate the workers to execute steps efficiently - assign workers and manage the execution
+3. The frontend automatically coordinates Worker 0 as transporter and Workers 1-4 as machine operators
 4. Report progress as steps complete
-5. When all steps are done, provide a final summary
-
-Be efficient with worker assignments. Use both workers in parallel when possible (one fetching material while the other operates a machine).`;
+5. When all steps are done, provide a final summary`;
 
 function getRetryDelay(error: any): number | null {
   try {

@@ -185,7 +185,7 @@ export function OrchestratorView() {
 Manufacturing steps have been pre-computed:
 ${stepsDescription}
 
-Please coordinate the 2 worker robots to execute these ${mfgSteps.length} steps. Start by planning the manufacturing, then begin executing steps. Use both workers efficiently.`;
+Please coordinate the 5 worker robots to execute these ${mfgSteps.length} steps. Worker 0 is the transporter (picks up sheets, carries between machines, stores finished pipes in the rack). Workers 1-4 are machine operators (cutter, roller, press, welder). The frontend handles the physical coordination automatically. Start by planning the manufacturing and reporting progress.`;
 
       try {
         const resp = await fetch("/api/orchestrator", {
