@@ -103,7 +103,8 @@ export interface WalkState {
 export function startWalkCycle(
   parts: RobotParts,
   state: WalkState,
-  currentAngles: Record<JointName, number>
+  currentAngles: Record<JointName, number>,
+  carryMode: boolean = false
 ): void {
   if (state.active) return;
   state.active = true;
@@ -145,17 +146,29 @@ export function startWalkCycle(
     currentAngles.leftKnee = lKnee;
     currentAngles.rightKnee = rKnee;
 
-    // Arm counterswing
-    const armSwing = Math.sin(p) * 15;
-    applyJoint(parts, "leftShoulder", armSwing);
-    applyJoint(parts, "rightShoulder", -armSwing);
-    applyJoint(parts, "leftElbow", 10);
-    applyJoint(parts, "rightElbow", 10);
+    if (carryMode) {
+      // Keep arms in carry pose — no counterswing
+      applyJoint(parts, "leftShoulder", -30);
+      applyJoint(parts, "rightShoulder", -30);
+      applyJoint(parts, "leftElbow", -60);
+      applyJoint(parts, "rightElbow", -60);
+      currentAngles.leftShoulder = -30;
+      currentAngles.rightShoulder = -30;
+      currentAngles.leftElbow = 60;
+      currentAngles.rightElbow = 60;
+    } else {
+      // Arm counterswing
+      const armSwing = Math.sin(p) * 15;
+      applyJoint(parts, "leftShoulder", armSwing);
+      applyJoint(parts, "rightShoulder", -armSwing);
+      applyJoint(parts, "leftElbow", 10);
+      applyJoint(parts, "rightElbow", 10);
 
-    currentAngles.leftShoulder = armSwing;
-    currentAngles.rightShoulder = -armSwing;
-    currentAngles.leftElbow = 10;
-    currentAngles.rightElbow = 10;
+      currentAngles.leftShoulder = armSwing;
+      currentAngles.rightShoulder = -armSwing;
+      currentAngles.leftElbow = 10;
+      currentAngles.rightElbow = 10;
+    }
 
     // Head stabilization
     parts.head.rotation.z = -Math.sin(p) * 0.015;
@@ -169,12 +182,25 @@ export function startWalkCycle(
 export function stopWalkCycle(
   parts: RobotParts,
   state: WalkState,
-  currentAngles: Record<JointName, number>
+  currentAngles: Record<JointName, number>,
+  carryMode: boolean = false
 ): Promise<void> {
   state.active = false;
   if (state.rafId !== null) {
     cancelAnimationFrame(state.rafId);
     state.rafId = null;
+  }
+
+  if (carryMode) {
+    // Only reset legs and torso, keep arms in carry pose
+    const legJoints: JointName[] = ["leftHip", "leftKnee", "rightHip", "rightKnee"];
+    parts.torso.position.y = 2.3;
+    parts.torso.position.x = 0;
+    parts.torso.rotation.z = 0;
+    parts.head.rotation.z = 0;
+    return Promise.all(
+      legJoints.map((j) => smoothSetJoint(parts, j, 0, 400, currentAngles))
+    ).then(() => {});
   }
 
   // Smoothly return to neutral

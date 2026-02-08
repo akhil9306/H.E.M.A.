@@ -48,21 +48,22 @@ export class WorkerRobot {
   // ─── Movement ───
 
   async walkTo(target: THREE.Vector3): Promise<void> {
-    this.status = "walking";
+    const isCarrying = this.status === "carrying" || this.carriedMesh !== null;
+    this.status = isCarrying ? "carrying" : "walking";
 
     const start = this.robot.position.clone();
     const direction = new THREE.Vector3().subVectors(target, start);
     const distance = direction.length();
 
     if (distance < 0.1) {
-      this.status = "idle";
+      this.status = isCarrying ? "carrying" : "idle";
       return;
     }
 
     const angle = Math.atan2(direction.x, direction.z);
     this.robot.rotation.y = angle;
 
-    startWalkCycle(this.parts, this.walkState, this.currentAngles);
+    startWalkCycle(this.parts, this.walkState, this.currentAngles, isCarrying);
 
     const speed = 1.5;
     const duration = (distance / speed) * 1000;
@@ -80,9 +81,9 @@ export class WorkerRobot {
         if (t < 1) {
           requestAnimationFrame(moveStep);
         } else {
-          stopWalkCycle(this.parts, this.walkState, this.currentAngles);
+          stopWalkCycle(this.parts, this.walkState, this.currentAngles, isCarrying);
           this.robot.position.copy(target);
-          this.status = "idle";
+          this.status = isCarrying ? "carrying" : "idle";
           resolve();
         }
       };
@@ -126,7 +127,7 @@ export class WorkerRobot {
   attachWorkpiece(mesh: THREE.Mesh): void {
     mesh.parent?.remove(mesh);
     // Position between hands in carry pose
-    mesh.position.set(0, 1.5, 0.3);
+    mesh.position.set(0, 1.5, 0.9);
     mesh.rotation.set(0, 0, 0);
     this.robot.add(mesh);
     this.carriedMesh = mesh;

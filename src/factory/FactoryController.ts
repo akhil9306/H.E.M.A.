@@ -136,7 +136,7 @@ export class FactoryController {
   private createWorkpiece(): THREE.Mesh {
     this.disposeWorkpiece();
     const MATS = getFactoryMaterials();
-    const geo = new THREE.BoxGeometry(0.8, 0.02, 0.5);
+    const geo = new THREE.BoxGeometry(1.8, 0.04, 1.2);
     const mesh = new THREE.Mesh(geo, MATS.steel);
     mesh.castShadow = true;
     this.workpiece = mesh;
@@ -173,17 +173,16 @@ export class FactoryController {
     if (!this.workpiece) return;
     const oldGeo = this.workpiece.geometry;
     const r = diameter / 2;
-    // Scale height for display (max 1.0 visual units)
-    const displayH = Math.min(height * 0.3, 1.0);
-    this.workpiece.geometry = new THREE.CylinderGeometry(r * 0.4, r * 0.4, displayH, 32, 1, true);
+    const displayH = Math.min(height * 0.5, 1.5);
+    this.workpiece.geometry = new THREE.CylinderGeometry(r, r, displayH, 32, 1, true);
     oldGeo.dispose();
   }
 
   private transformWorkpieceToFrustrum(topR: number, bottomR: number, height: number): void {
     if (!this.workpiece) return;
     const oldGeo = this.workpiece.geometry;
-    const displayH = Math.min(height * 0.3, 1.0);
-    this.workpiece.geometry = new THREE.CylinderGeometry(topR * 0.4, bottomR * 0.4, displayH, 32);
+    const displayH = Math.min(height * 0.5, 1.5);
+    this.workpiece.geometry = new THREE.CylinderGeometry(topR, bottomR, displayH, 32);
     oldGeo.dispose();
   }
 
