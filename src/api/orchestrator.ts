@@ -12,136 +12,122 @@ const orchestratorTools = {
     {
       name: "planManufacturing",
       description:
-        "Analyze the pipe specification and create a detailed manufacturing plan. Call this first when you receive a pipe spec.",
+        "Analyze the pipe specification and acknowledge your manufacturing plan. Call this FIRST when you receive a pipe spec, before dispatching any workers.",
       parameters: {
         type: SchemaType.OBJECT,
         properties: {
-          totalLength: { type: SchemaType.NUMBER, description: "Total pipe length in meters" },
-          initialDiameter: { type: SchemaType.NUMBER, description: "Initial pipe diameter in meters" },
-          segmentCount: { type: SchemaType.NUMBER, description: "Number of segments in the pipe" },
-          summary: { type: SchemaType.STRING, description: "Your summary of the manufacturing plan" },
-        },
-        required: ["totalLength", "initialDiameter", "segmentCount", "summary"],
-      },
-    },
-    {
-      name: "assignWorkerToStep",
-      description: "Assign a worker robot to execute a specific manufacturing step.",
-      parameters: {
-        type: SchemaType.OBJECT,
-        properties: {
-          workerId: { type: SchemaType.NUMBER, description: "Worker robot ID (0-4)" },
-          stepId: { type: SchemaType.STRING, description: "ID of the manufacturing step" },
-        },
-        required: ["workerId", "stepId"],
-      },
-    },
-    {
-      name: "moveWorkerToMachine",
-      description: "Move a worker robot to a specific machine on the factory floor.",
-      parameters: {
-        type: SchemaType.OBJECT,
-        properties: {
-          workerId: { type: SchemaType.NUMBER, description: "Worker robot ID (0-4)" },
-          machineId: {
+          summary: {
             type: SchemaType.STRING,
-            enum: ["sheetStock", "cutter", "roller", "press", "welder"],
-            description: "Target machine",
+            description: "Your summary of the manufacturing plan — what segments will be made and in what order",
+          },
+          stepCount: {
+            type: SchemaType.NUMBER,
+            description: "Total number of manufacturing steps",
+          },
+          estimatedSegments: {
+            type: SchemaType.NUMBER,
+            description: "Number of pipe segments to manufacture",
           },
         },
-        required: ["workerId", "machineId"],
+        required: ["summary", "stepCount", "estimatedSegments"],
       },
     },
     {
-      name: "setMachineParameters",
-      description: "Set the parameters of a manufacturing machine before operation.",
+      name: "dispatchWorkerTask",
+      description:
+        "Dispatch a task to a specific worker robot. Each worker has its own AI brain and will use its tools (walk, operate machine, capture vision) to execute the task autonomously. This call BLOCKS until the worker finishes and reports back. Be very specific in the taskDescription — include machine names, dimensions, and what the worker should do step by step.",
       parameters: {
         type: SchemaType.OBJECT,
         properties: {
-          machineId: {
-            type: SchemaType.STRING,
-            enum: ["roller", "press"],
-            description: "Machine to configure (only roller and press have adjustable params)",
+          workerId: {
+            type: SchemaType.NUMBER,
+            description:
+              "Worker robot ID. 0=Transporter (material handling), 1=Cutter operator, 2=Roller operator, 3=Press operator, 4=Welder",
           },
-          diameter: { type: SchemaType.NUMBER, description: "For roller: pipe diameter in meters" },
-          height: { type: SchemaType.NUMBER, description: "For roller: pipe segment height in meters" },
-          topRadius: { type: SchemaType.NUMBER, description: "For press: frustrum top radius in meters" },
-          bottomRadius: { type: SchemaType.NUMBER, description: "For press: frustrum bottom radius in meters" },
-          frustrumHeight: { type: SchemaType.NUMBER, description: "For press: frustrum height in meters" },
-        },
-        required: ["machineId"],
-      },
-    },
-    {
-      name: "executeMachineOperation",
-      description: "Trigger a machine to perform its operation. The worker must be at the machine first.",
-      parameters: {
-        type: SchemaType.OBJECT,
-        properties: {
-          machineId: {
+          taskDescription: {
             type: SchemaType.STRING,
-            enum: ["sheetStock", "cutter", "roller", "press", "welder"],
-            description: "Machine to operate",
+            description:
+              "Detailed task instructions for the worker. Include: what machine to go to, what action to perform, any specific dimensions/parameters, and what the expected outcome is. The worker will read this and decide how to execute using its own tools.",
           },
-          operationDescription: {
+          relatedStepId: {
             type: SchemaType.STRING,
-            description: "Description of what this operation produces",
+            description: "The manufacturing step ID this task relates to, for progress tracking",
           },
         },
-        required: ["machineId", "operationDescription"],
-      },
-    },
-    {
-      name: "reportStepComplete",
-      description: "Report that a manufacturing step has been completed successfully.",
-      parameters: {
-        type: SchemaType.OBJECT,
-        properties: {
-          stepId: { type: SchemaType.STRING, description: "ID of the completed step" },
-          result: { type: SchemaType.STRING, description: "Result description" },
-        },
-        required: ["stepId", "result"],
+        required: ["workerId", "taskDescription", "relatedStepId"],
       },
     },
     {
       name: "getFactoryStatus",
-      description: "Get the current status of all machines, workers, and manufacturing progress.",
+      description:
+        "Get the current status of all workers, machines, and manufacturing progress. Returns a JSON snapshot of the entire factory state.",
       parameters: {
         type: SchemaType.OBJECT,
         properties: {},
       },
     },
+    {
+      name: "reportManufacturingComplete",
+      description:
+        "Report that all manufacturing is done. Call this after all steps have been completed and all pipes are stored in the rack.",
+      parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+          summary: {
+            type: SchemaType.STRING,
+            description: "Final summary of the manufacturing run — what was produced, how many pieces, any issues encountered",
+          },
+        },
+        required: ["summary"],
+      },
+    },
   ],
 };
 
-const ORCHESTRATOR_SYSTEM = `You are the Factory Floor Orchestrator for H.E.M.A. Pipeline Manufacturing. You manage a factory that manufactures custom metal pipes with varying diameters.
+const ORCHESTRATOR_SYSTEM = `You are the Factory Floor Orchestrator for H.E.M.A. Pipeline Manufacturing. You coordinate 5 AI-powered worker robots to manufacture custom metal pipes.
 
-FACTORY MACHINES (positioned left to right):
-1. Metal Sheet Stock (sheetStock) - Raw material storage with stacked metal sheets
-2. Guillotine Cutter (cutter) - Hydraulic sheet cutter for sizing material
-3. 3-Roller Bending Machine (roller) - Bends flat sheets into cylinders. Params: diameter (0.3-2.0m), height (1.0-5.0m)
-4. Frustrum Press (press) - Forms conical/frustrum transition pieces. Params: topRadius (0.2-1.0m), bottomRadius (0.3-1.2m), height (0.3-1.5m)
-5. Welding Station (welder) - Welds seams and joins pipe sections
+IMPORTANT: Each worker has its OWN AI brain. When you dispatch a task, the worker autonomously decides how to execute it — walking to machines and operating equipment. You give high-level instructions; the workers handle the details. Workers are efficient and do not waste time on unnecessary verification steps.
 
-WORKERS: 5 robots with specialized roles:
-- Worker 0 (Transporter) - Stationed at Sheet Stock. Responsible for picking up materials, carrying them between machines, and storing finished pipes in the pipe rack.
-- Worker 1 (Cutter Operator) - Stationed at Guillotine Cutter. Operates the cutter with a lever-pull motion.
-- Worker 2 (Roller Operator) - Stationed at 3-Roller Bender. Guides sheets through the rollers.
-- Worker 3 (Press Operator) - Stationed at Frustrum Press. Operates the press controls.
-- Worker 4 (Welder) - Stationed at Welding Station. Performs welding with torch sweep motions.
+WORKERS:
+- Worker 0 (Transporter): Handles ALL material movement. Can pick up sheets from stock, carry workpieces between machines, and store finished pipes in the rack. Tools: pickUpSheet, pickUpWorkpiece, placeWorkpiece, storeInRack, walkToMachine
+- Worker 1 (Cutter Operator): Operates the guillotine cutter. Tools: operateCutter, walkToMachine
+- Worker 2 (Roller Operator): Configures and operates the 3-roller bending machine. Tools: setRollerParams, operateRoller, walkToMachine
+- Worker 3 (Press Operator): Configures and operates the frustrum press. Tools: setPressParams, operatePress, walkToMachine
+- Worker 4 (Welder): Operates the welding station. Tools: operateWelder, walkToMachine
 
-PIPE RACK: Located after the welding station. Stores completed pipe segments in V-shaped cradles (capacity: 5 pipes).
+FACTORY LAYOUT (left to right):
+Sheet Stock (x=-12) → Cutter (x=-6) → Roller (x=0) → Press (x=6) → Welder (x=12) → Pipe Rack (x=18)
 
-MANUFACTURING PROCESS:
-For each segment: Worker 0 fetches sheet → carries to cutter → Worker 1 cuts → Worker 0 carries to roller/press → Worker 2/3 operates → Worker 0 carries to welder → Worker 4 welds → Worker 0 stores in pipe rack.
-Final assembly: Worker 0 retrieves from rack → Worker 4 welds sections together → Worker 0 stores back.
+MANUFACTURING PROCESS FOR EACH PIPE SEGMENT:
+1. Worker 0 fetches a fresh sheet from sheet stock
+2. Worker 0 carries the sheet to the cutter and places it
+3. Worker 1 cuts the sheet to size
+4. Worker 0 picks up from cutter, carries to roller (for cylinders) or press (for frustrums), and places it
+5. Worker 2 sets roller params and bends (or Worker 3 sets press params and forms)
+6. Worker 0 picks up from roller/press, carries to welder, and places it
+7. Worker 4 welds the longitudinal seam
+8. Worker 0 picks up from welder and stores in the pipe rack
+
+For multi-segment pipes, after ALL segments are manufactured:
+9. Worker 0 retrieves segments from the rack and brings them to the welder
+10. Worker 4 performs circumferential welds to join sections
+
+DISPATCHING RULES:
+- Use dispatchWorkerTask to send specific tasks to workers. Each dispatch blocks until the worker finishes.
+- You MUST coordinate the correct order: the transporter must place material BEFORE an operator can work on it.
+- Include specific dimensions in task descriptions! For example: "Walk to the roller, set parameters to diameter=0.8m and height=2.5m, then operate the roller to bend the sheet into a cylinder."
+- Do NOT ask workers to use vision or verify anything in your task descriptions. The factory systems are reliable — workers just need to walk, operate, and report done.
+- If a worker reports a problem, decide whether to retry or skip.
+- Process segments sequentially (one at a time through the full pipeline).
+- ALWAYS call planManufacturing FIRST before dispatching any workers.
+- ALWAYS call reportManufacturingComplete when ALL work is done.
 
 WORKFLOW:
-1. When you receive a pipe specification, first call planManufacturing to acknowledge and summarize the plan
-2. The frontend will provide you with pre-computed manufacturing steps
-3. The frontend automatically coordinates Worker 0 as transporter and Workers 1-4 as machine operators
-4. Report progress as steps complete
-5. When all steps are done, provide a final summary`;
+1. Receive pipe spec with pre-computed manufacturing steps
+2. Call planManufacturing to acknowledge the plan
+3. For each segment, dispatch tasks in sequence through the pipeline
+4. After all segments are complete, dispatch any weld-sections tasks
+5. Call reportManufacturingComplete with a final summary`;
 
 function getRetryDelay(error: any): number | null {
   try {

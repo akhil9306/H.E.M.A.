@@ -126,8 +126,8 @@ export class WorkerRobot {
    */
   attachWorkpiece(mesh: THREE.Mesh): void {
     mesh.parent?.remove(mesh);
-    // Position between hands in carry pose
-    mesh.position.set(0, 1.5, 0.9);
+    // Position between hands in carry pose (hands at ~y=2.2, z=0.8 in robot space)
+    mesh.position.set(0, 2.1, 0.7);
     mesh.rotation.set(0, 0, 0);
     this.robot.add(mesh);
     this.carriedMesh = mesh;
@@ -151,12 +151,12 @@ export class WorkerRobot {
     this.status = "operating";
     this.robot.rotation.y = Math.PI;
 
-    // Reach forward and down
+    // Reach forward — bicep vertical, forearm horizontal
     await Promise.all([
-      smoothSetJoint(this.parts, "leftShoulder", -70, 400, this.currentAngles),
-      smoothSetJoint(this.parts, "rightShoulder", -70, 400, this.currentAngles),
-      smoothSetJoint(this.parts, "leftElbow", 50, 400, this.currentAngles),
-      smoothSetJoint(this.parts, "rightElbow", 50, 400, this.currentAngles),
+      smoothSetJoint(this.parts, "leftShoulder", -20, 400, this.currentAngles),
+      smoothSetJoint(this.parts, "rightShoulder", -20, 400, this.currentAngles),
+      smoothSetJoint(this.parts, "leftElbow", 80, 400, this.currentAngles),
+      smoothSetJoint(this.parts, "rightElbow", 80, 400, this.currentAngles),
       smoothSetJoint(this.parts, "leftFingers", 0, 200, this.currentAngles),
       smoothSetJoint(this.parts, "rightFingers", 0, 200, this.currentAngles),
     ]);
@@ -169,12 +169,12 @@ export class WorkerRobot {
       smoothSetJoint(this.parts, "rightFingers", 70, 300, this.currentAngles),
     ]);
 
-    // Lift up to carry position
+    // Lift up to carry position — bicep nearly vertical, forearm horizontal
     await Promise.all([
-      smoothSetJoint(this.parts, "leftShoulder", -30, 400, this.currentAngles),
-      smoothSetJoint(this.parts, "rightShoulder", -30, 400, this.currentAngles),
-      smoothSetJoint(this.parts, "leftElbow", 60, 400, this.currentAngles),
-      smoothSetJoint(this.parts, "rightElbow", 60, 400, this.currentAngles),
+      smoothSetJoint(this.parts, "leftShoulder", -20, 400, this.currentAngles),
+      smoothSetJoint(this.parts, "rightShoulder", -20, 400, this.currentAngles),
+      smoothSetJoint(this.parts, "leftElbow", 70, 400, this.currentAngles),
+      smoothSetJoint(this.parts, "rightElbow", 70, 400, this.currentAngles),
     ]);
 
     this.status = "carrying";
@@ -187,12 +187,12 @@ export class WorkerRobot {
     this.status = "operating";
     this.robot.rotation.y = Math.PI;
 
-    // Lower to place
+    // Lower to place — bicep vertical, forearm horizontal
     await Promise.all([
-      smoothSetJoint(this.parts, "leftShoulder", -65, 400, this.currentAngles),
-      smoothSetJoint(this.parts, "rightShoulder", -65, 400, this.currentAngles),
-      smoothSetJoint(this.parts, "leftElbow", 45, 400, this.currentAngles),
-      smoothSetJoint(this.parts, "rightElbow", 45, 400, this.currentAngles),
+      smoothSetJoint(this.parts, "leftShoulder", -20, 400, this.currentAngles),
+      smoothSetJoint(this.parts, "rightShoulder", -20, 400, this.currentAngles),
+      smoothSetJoint(this.parts, "leftElbow", 80, 400, this.currentAngles),
+      smoothSetJoint(this.parts, "rightElbow", 80, 400, this.currentAngles),
     ]);
 
     await new Promise((r) => setTimeout(r, 200));

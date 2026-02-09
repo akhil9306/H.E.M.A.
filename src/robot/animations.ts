@@ -148,24 +148,24 @@ export function startWalkCycle(
 
     if (carryMode) {
       // Keep arms in carry pose — no counterswing
-      applyJoint(parts, "leftShoulder", -30);
-      applyJoint(parts, "rightShoulder", -30);
-      applyJoint(parts, "leftElbow", -60);
-      applyJoint(parts, "rightElbow", -60);
-      currentAngles.leftShoulder = -30;
-      currentAngles.rightShoulder = -30;
-      currentAngles.leftElbow = 60;
-      currentAngles.rightElbow = 60;
+      applyJoint(parts, "leftShoulder", -20);
+      applyJoint(parts, "rightShoulder", -20);
+      applyJoint(parts, "leftElbow", 70);
+      applyJoint(parts, "rightElbow", 70);
+      currentAngles.leftShoulder = -20;
+      currentAngles.rightShoulder = -20;
+      currentAngles.leftElbow = 70;
+      currentAngles.rightElbow = 70;
     } else {
-      // Arm counterswing
+      // Arm counterswing — opposite arm swings forward with each leg
       const armSwing = Math.sin(p) * 15;
-      applyJoint(parts, "leftShoulder", armSwing);
-      applyJoint(parts, "rightShoulder", -armSwing);
+      applyJoint(parts, "leftShoulder", -armSwing);
+      applyJoint(parts, "rightShoulder", armSwing);
       applyJoint(parts, "leftElbow", 10);
       applyJoint(parts, "rightElbow", 10);
 
-      currentAngles.leftShoulder = armSwing;
-      currentAngles.rightShoulder = -armSwing;
+      currentAngles.leftShoulder = -armSwing;
+      currentAngles.rightShoulder = armSwing;
       currentAngles.leftElbow = 10;
       currentAngles.rightElbow = 10;
     }

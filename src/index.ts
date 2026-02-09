@@ -2,9 +2,11 @@ import { serve } from "bun";
 import index from "./index.html";
 import { GeminiSession } from "./api/gemini";
 import { OrchestratorSession } from "./api/orchestrator";
+import { WorkerSession } from "./api/workerAI";
 
 const sessions = new Map<string, GeminiSession>();
 const orchestratorSessions = new Map<string, OrchestratorSession>();
+const workerSessions = new Map<string, WorkerSession>();
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
 
@@ -143,6 +145,79 @@ const server = serve({
             if (session) {
               session.reset();
               orchestratorSessions.delete(sessionId);
+            }
+          }
+          return Response.json({ ok: true });
+        } catch {
+          return Response.json({ ok: true });
+        }
+      },
+    },
+
+    "/api/worker": {
+      async POST(req) {
+        try {
+          const body = await req.json();
+          const { message, sessionId, workerId, toolResults } = body;
+
+          if (!GEMINI_API_KEY) {
+            return Response.json(
+              { type: "error", error: "GEMINI_API_KEY not configured on server" },
+              { status: 500 }
+            );
+          }
+
+          if (!sessionId) {
+            return Response.json(
+              { type: "error", error: "sessionId required" },
+              { status: 400 }
+            );
+          }
+
+          let session = workerSessions.get(sessionId);
+          if (!session) {
+            if (workerId === undefined) {
+              return Response.json(
+                { type: "error", error: "workerId required for new worker session" },
+                { status: 400 }
+              );
+            }
+            session = new WorkerSession(GEMINI_API_KEY, workerId);
+            workerSessions.set(sessionId, session);
+          }
+
+          let result;
+          if (toolResults) {
+            result = await session.submitToolResults(toolResults);
+          } else if (message) {
+            result = await session.sendMessage(message);
+          } else {
+            return Response.json(
+              { type: "error", error: "message or toolResults required" },
+              { status: 400 }
+            );
+          }
+
+          return Response.json(result);
+        } catch (err: any) {
+          console.error("Worker error:", err);
+          return Response.json(
+            { type: "error", error: err.message },
+            { status: 500 }
+          );
+        }
+      },
+    },
+
+    "/api/worker/reset": {
+      async POST(req) {
+        try {
+          const { sessionId } = await req.json();
+          if (sessionId) {
+            const session = workerSessions.get(sessionId);
+            if (session) {
+              session.reset();
+              workerSessions.delete(sessionId);
             }
           }
           return Response.json({ ok: true });

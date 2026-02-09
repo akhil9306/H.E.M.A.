@@ -42,6 +42,10 @@ export class FactoryController {
   private storedPipes: THREE.Mesh[] = [];
   private nextCradleIndex = 0;
 
+  // Vision system (shared across workers)
+  private visionRenderer: THREE.WebGLRenderer | null = null;
+  private visionCamera: THREE.PerspectiveCamera | null = null;
+
   initialize(container: HTMLDivElement): void {
     this.sceneResult = createFactoryScene(container);
     this.machinesResult = createAllMachines(this.sceneResult.scene, this.params);
@@ -52,6 +56,7 @@ export class FactoryController {
       this.addWorker(WORKER_HOME_POSITIONS[machineId].clone(), WORKER_APPROACH_Z[i]!);
     }
 
+    this.initializeVision();
     this.animate();
   }
 
@@ -74,6 +79,13 @@ export class FactoryController {
     }
     this.storedPipes = [];
 
+    // Clean up vision
+    if (this.visionRenderer) {
+      this.visionRenderer.dispose();
+      this.visionRenderer = null;
+    }
+    this.visionCamera = null;
+
     if (this.sceneResult) {
       this.sceneResult.controls.dispose();
       this.sceneResult.renderer.dispose();
@@ -87,6 +99,46 @@ export class FactoryController {
 
   setOnStateChange(cb: () => void): void {
     this.onStateChange = cb;
+  }
+
+  // ─── Vision System ───
+
+  private initializeVision(): void {
+    const canvas = document.createElement("canvas");
+    canvas.width = 320;
+    canvas.height = 240;
+    this.visionRenderer = new THREE.WebGLRenderer({
+      canvas,
+      antialias: false,
+      preserveDrawingBuffer: true,
+    });
+    this.visionRenderer.setSize(320, 240);
+    this.visionRenderer.setClearColor(0x1a1a2e, 1);
+    this.visionCamera = new THREE.PerspectiveCamera(80, 320 / 240, 0.1, 50);
+  }
+
+  captureVision(workerId: number): string {
+    if (!this.visionRenderer || !this.visionCamera || !this.sceneResult) return "";
+    const worker = this.workers[workerId];
+    if (!worker) return "";
+
+    const robotGroup = worker.getRobotGroup();
+    robotGroup.updateMatrixWorld(true);
+
+    // Position camera at the worker's eye level
+    // Head is approximately at y=3.1 in robot local space, slightly forward at z=0.3
+    const eyeLocal = new THREE.Vector3(0, 3.1, 0.3);
+    const eyeWorld = eyeLocal.applyMatrix4(robotGroup.matrixWorld);
+    this.visionCamera.position.copy(eyeWorld);
+
+    // Face the same direction as the robot
+    const forwardLocal = new THREE.Vector3(0, 2.8, 2.0);
+    const forwardWorld = forwardLocal.applyMatrix4(robotGroup.matrixWorld);
+    this.visionCamera.lookAt(forwardWorld);
+
+    this.visionCamera.updateMatrixWorld(true);
+    this.visionRenderer.render(this.sceneResult.scene, this.visionCamera);
+    return this.visionRenderer.domElement.toDataURL("image/jpeg", 0.8);
   }
 
   // ─── Worker Management ───
@@ -131,9 +183,9 @@ export class FactoryController {
     return `Machine ${machineId} operation completed`;
   }
 
-  // ─── Workpiece Management ───
+  // ─── Workpiece Management (public for AI tool calls) ───
 
-  private createWorkpiece(): THREE.Mesh {
+  createNewWorkpiece(): THREE.Mesh {
     this.disposeWorkpiece();
     const MATS = getFactoryMaterials();
     const geo = new THREE.BoxGeometry(1.8, 0.04, 1.2);
@@ -143,9 +195,8 @@ export class FactoryController {
     return mesh;
   }
 
-  private placeWorkpieceAtMachine(machineId: MachineId): void {
+  placeWorkpieceAtMachine(machineId: MachineId): void {
     if (!this.workpiece || !this.sceneResult) return;
-    // Remove from robot if attached
     this.workpiece.parent?.remove(this.workpiece);
     const pos = WORKPIECE_POSITIONS[machineId];
     this.workpiece.position.copy(pos);
@@ -153,14 +204,14 @@ export class FactoryController {
     this.sceneResult.scene.add(this.workpiece);
   }
 
-  private attachWorkpieceToWorker(workerId: number): void {
+  attachWorkpieceToWorker(workerId: number): void {
     if (!this.workpiece) return;
     const worker = this.workers[workerId];
     if (!worker) return;
     worker.attachWorkpiece(this.workpiece);
   }
 
-  private detachWorkpieceFromWorker(workerId: number): void {
+  detachWorkpieceFromWorker(workerId: number): void {
     const worker = this.workers[workerId];
     if (!worker) return;
     const mesh = worker.detachWorkpiece();
@@ -169,44 +220,14 @@ export class FactoryController {
     }
   }
 
-  private transformWorkpieceToCylinder(diameter: number, height: number): void {
-    if (!this.workpiece) return;
-    const oldGeo = this.workpiece.geometry;
-    const r = diameter / 2;
-    const displayH = Math.min(height * 0.5, 1.5);
-    this.workpiece.geometry = new THREE.CylinderGeometry(r, r, displayH, 32, 1, true);
-    oldGeo.dispose();
-  }
-
-  private transformWorkpieceToFrustrum(topR: number, bottomR: number, height: number): void {
-    if (!this.workpiece) return;
-    const oldGeo = this.workpiece.geometry;
-    const displayH = Math.min(height * 0.5, 1.5);
-    this.workpiece.geometry = new THREE.CylinderGeometry(topR, bottomR, displayH, 32);
-    oldGeo.dispose();
-  }
-
-  private closeWorkpiece(): void {
-    if (!this.workpiece) return;
-    const oldGeo = this.workpiece.geometry;
-    // Close the open cylinder (remake with openEnded=false)
-    if (oldGeo instanceof THREE.CylinderGeometry) {
-      const params = oldGeo.parameters;
-      this.workpiece.geometry = new THREE.CylinderGeometry(
-        params.radiusTop, params.radiusBottom, params.height, 32, 1, false
-      );
-      oldGeo.dispose();
-    }
-  }
-
-  private storeWorkpieceInRack(): void {
+  storeWorkpieceInRack(): void {
     if (!this.workpiece || !this.machinesResult || !this.sceneResult) return;
     const rack = this.machinesResult.pipeRack;
     if (this.nextCradleIndex < rack.cradlePositions.length) {
       this.workpiece.parent?.remove(this.workpiece);
       const cradlePos = rack.cradlePositions[this.nextCradleIndex]!;
       this.workpiece.position.copy(cradlePos);
-      this.workpiece.rotation.set(0, 0, Math.PI / 2); // lay pipe horizontally
+      this.workpiece.rotation.set(0, 0, Math.PI / 2);
       this.sceneResult.scene.add(this.workpiece);
       this.storedPipes.push(this.workpiece);
       this.nextCradleIndex++;
@@ -222,261 +243,123 @@ export class FactoryController {
     }
   }
 
-  // ─── Step Execution ───
+  // ─── Compound Operations (for AI worker tools) ───
+
+  async fetchSheet(workerId: number): Promise<string> {
+    const worker = this.workers[workerId];
+    if (!worker) return "Worker not found";
+    await worker.pickUpGesture();
+    this.createNewWorkpiece();
+    this.attachWorkpieceToWorker(workerId);
+    this.onStateChange?.();
+    return "Fresh sheet picked up from stock and attached for carrying";
+  }
+
+  async carryAndPlace(workerId: number, machineId: MachineId): Promise<string> {
+    const worker = this.workers[workerId];
+    if (!worker) return "Worker not found";
+    this.detachWorkpieceFromWorker(workerId);
+    this.placeWorkpieceAtMachine(machineId);
+    await worker.placeDownGesture();
+    this.onStateChange?.();
+    return `Workpiece placed at ${machineId}`;
+  }
+
+  async pickUpFrom(workerId: number, machineId: MachineId): Promise<string> {
+    const worker = this.workers[workerId];
+    if (!worker) return "Worker not found";
+    await worker.pickUpGesture();
+    this.attachWorkpieceToWorker(workerId);
+    this.onStateChange?.();
+    return `Picked up workpiece from ${machineId}`;
+  }
+
+  async operateMachineWithWorker(workerId: number, machineId: MachineId): Promise<string> {
+    const worker = this.workers[workerId];
+    if (!worker || !this.machinesResult) return "Not ready";
+
+    switch (machineId) {
+      case "cutter":
+        await Promise.all([
+          worker.operateCutter(),
+          this.triggerMachine("cutter", 3000),
+        ]);
+        break;
+      case "roller":
+        await Promise.all([
+          worker.operateRoller(),
+          this.triggerMachine("roller", 4000),
+        ]);
+        if (this.workpiece) {
+          const oldGeo = this.workpiece.geometry;
+          const r = this.params.roller.diameter / 2;
+          const displayH = Math.min(this.params.roller.height * 0.5, 1.5);
+          this.workpiece.geometry = new THREE.CylinderGeometry(r, r, displayH, 32, 1, true);
+          oldGeo.dispose();
+        }
+        break;
+      case "press":
+        await Promise.all([
+          worker.operatePress(),
+          this.triggerMachine("press", 3000),
+        ]);
+        if (this.workpiece) {
+          const oldGeo = this.workpiece.geometry;
+          const displayH = Math.min(this.params.press.frustrumHeight * 0.5, 1.5);
+          this.workpiece.geometry = new THREE.CylinderGeometry(
+            this.params.press.topRadius,
+            this.params.press.bottomRadius,
+            displayH,
+            32
+          );
+          oldGeo.dispose();
+        }
+        break;
+      case "welder":
+        await Promise.all([
+          worker.operateWelder(),
+          this.triggerMachine("welder", 4000),
+        ]);
+        // Close the open cylinder (weld seam)
+        if (this.workpiece) {
+          const oldGeo = this.workpiece.geometry;
+          if (oldGeo instanceof THREE.CylinderGeometry) {
+            const params = oldGeo.parameters;
+            this.workpiece.geometry = new THREE.CylinderGeometry(
+              params.radiusTop,
+              params.radiusBottom,
+              params.height,
+              32,
+              1,
+              false
+            );
+            oldGeo.dispose();
+          }
+        }
+        break;
+      default:
+        await worker.operateMachine();
+        break;
+    }
+
+    this.onStateChange?.();
+    return `${machineId} operation completed successfully`;
+  }
+
+  async storeInRackFromWorker(workerId: number): Promise<string> {
+    const worker = this.workers[workerId];
+    if (!worker) return "Worker not found";
+    this.detachWorkpieceFromWorker(workerId);
+    this.storeWorkpieceInRack();
+    await worker.placeDownGesture();
+    this.onStateChange?.();
+    return "Pipe segment stored in rack";
+  }
+
+  // ─── Step Tracking ───
 
   setSteps(steps: ManufacturingStep[]): void {
     this.steps = steps;
-    this.onStateChange?.();
-  }
-
-  /**
-   * Execute the full manufacturing workflow.
-   * Worker 0 (transporter) carries material between machines.
-   * Workers 1-4 (machine operators) perform specialized operations.
-   */
-  async executeAllSteps(): Promise<void> {
-    this.isRunning = true;
-    this.onStateChange?.();
-
-    const transporter = this.workers[0]!;
-    const cutterWorker = this.workers[1]!;
-    const rollerWorker = this.workers[2]!;
-    const pressWorker = this.workers[3]!;
-    const welderWorker = this.workers[4]!;
-
-    // Group steps by segment
-    const segmentGroups = new Map<number, ManufacturingStep[]>();
-    for (const step of this.steps) {
-      const group = segmentGroups.get(step.segmentIndex) || [];
-      group.push(step);
-      segmentGroups.set(step.segmentIndex, group);
-    }
-
-    // Find the actual segment processing groups (not weld_sections)
-    const segmentIndices = [...segmentGroups.keys()].sort((a, b) => a - b);
-
-    for (const segIdx of segmentIndices) {
-      if (!this.isRunning) break;
-
-      const segSteps = segmentGroups.get(segIdx)!;
-      const fetchStep = segSteps.find(s => s.action === "fetch_sheet");
-      const cutStep = segSteps.find(s => s.action === "cut_sheet");
-      const bendStep = segSteps.find(s => s.action === "bend_cylinder");
-      const pressStep = segSteps.find(s => s.action === "press_frustrum");
-      const weldSeamStep = segSteps.find(s => s.action === "weld_seam");
-      const weldSectionsSteps = segSteps.filter(s => s.action === "weld_sections");
-
-      // ── Phase 1: Fetch sheet from stock ──
-      if (fetchStep) {
-        fetchStep.status = "in_progress";
-        fetchStep.workerId = 0;
-        this.onStateChange?.();
-
-        // Transporter walks to sheet stock
-        await transporter.walkToMachine("sheetStock");
-        await transporter.pickUpGesture();
-
-        // Create visible workpiece and attach to transporter
-        this.createWorkpiece();
-        this.attachWorkpieceToWorker(0);
-
-        fetchStep.status = "completed";
-        this.onStateChange?.();
-      }
-
-      // ── Phase 2: Carry to cutter, cut ──
-      if (cutStep && this.workpiece) {
-        cutStep.status = "in_progress";
-        cutStep.workerId = 1;
-        this.onStateChange?.();
-
-        // Transporter carries sheet to cutter
-        await transporter.carryToMachine("cutter");
-        this.detachWorkpieceFromWorker(0);
-        this.placeWorkpieceAtMachine("cutter");
-        await transporter.placeDownGesture();
-
-        // Cutter worker operates the cutter
-        await cutterWorker.walkToMachine("cutter");
-        await Promise.all([
-          cutterWorker.operateCutter(),
-          this.triggerMachine("cutter", 3000),
-        ]);
-
-        cutStep.status = "completed";
-        this.onStateChange?.();
-
-        // Transporter picks up from cutter
-        await transporter.walkToMachine("cutter");
-        await transporter.pickUpGesture();
-        this.attachWorkpieceToWorker(0);
-      }
-
-      // ── Phase 3: Bend on roller OR press frustrum ──
-      if (bendStep && this.workpiece) {
-        bendStep.status = "in_progress";
-        bendStep.workerId = 2;
-        this.onStateChange?.();
-
-        // Set roller params
-        if (bendStep.params.diameter !== undefined) {
-          this.setRollerParams({
-            diameter: bendStep.params.diameter,
-            height: bendStep.params.height ?? 3.0,
-          });
-        }
-
-        // Transporter carries to roller
-        await transporter.carryToMachine("roller");
-        this.detachWorkpieceFromWorker(0);
-        this.placeWorkpieceAtMachine("roller");
-        await transporter.placeDownGesture();
-
-        // Roller worker operates
-        await rollerWorker.walkToMachine("roller");
-        await Promise.all([
-          rollerWorker.operateRoller(),
-          this.triggerMachine("roller", 4000),
-        ]);
-
-        // Transform workpiece to cylinder
-        this.transformWorkpieceToCylinder(
-          bendStep.params.diameter ?? 1.0,
-          bendStep.params.height ?? 3.0
-        );
-
-        bendStep.status = "completed";
-        this.onStateChange?.();
-
-        // Transporter picks up
-        await transporter.walkToMachine("roller");
-        await transporter.pickUpGesture();
-        this.attachWorkpieceToWorker(0);
-
-      } else if (pressStep && this.workpiece) {
-        pressStep.status = "in_progress";
-        pressStep.workerId = 3;
-        this.onStateChange?.();
-
-        // Set press params
-        if (pressStep.params.topRadius !== undefined) {
-          this.setPressParams({
-            topRadius: pressStep.params.topRadius,
-            bottomRadius: pressStep.params.bottomRadius ?? 0.6,
-            frustrumHeight: pressStep.params.frustrumHeight ?? 0.8,
-          });
-        }
-
-        // Transporter carries to press
-        await transporter.carryToMachine("press");
-        this.detachWorkpieceFromWorker(0);
-        this.placeWorkpieceAtMachine("press");
-        await transporter.placeDownGesture();
-
-        // Press worker operates
-        await pressWorker.walkToMachine("press");
-        await Promise.all([
-          pressWorker.operatePress(),
-          this.triggerMachine("press", 3000),
-        ]);
-
-        // Transform workpiece to frustrum
-        this.transformWorkpieceToFrustrum(
-          pressStep.params.topRadius ?? 0.4,
-          pressStep.params.bottomRadius ?? 0.6,
-          pressStep.params.frustrumHeight ?? 0.8
-        );
-
-        pressStep.status = "completed";
-        this.onStateChange?.();
-
-        // Transporter picks up
-        await transporter.walkToMachine("press");
-        await transporter.pickUpGesture();
-        this.attachWorkpieceToWorker(0);
-      }
-
-      // ── Phase 4: Weld seam ──
-      if (weldSeamStep && this.workpiece) {
-        weldSeamStep.status = "in_progress";
-        weldSeamStep.workerId = 4;
-        this.onStateChange?.();
-
-        // Transporter carries to welder
-        await transporter.carryToMachine("welder");
-        this.detachWorkpieceFromWorker(0);
-        this.placeWorkpieceAtMachine("welder");
-        await transporter.placeDownGesture();
-
-        // Welder worker operates
-        await welderWorker.walkToMachine("welder");
-        await Promise.all([
-          welderWorker.operateWelder(),
-          this.triggerMachine("welder", 4000),
-        ]);
-
-        // Close the cylinder (weld seam closed)
-        this.closeWorkpiece();
-
-        weldSeamStep.status = "completed";
-        this.onStateChange?.();
-
-        // Transporter picks up finished piece
-        await transporter.walkToMachine("welder");
-        await transporter.pickUpGesture();
-        this.attachWorkpieceToWorker(0);
-      }
-
-      // ── Phase 5: Store in pipe rack ──
-      if (this.workpiece) {
-        await transporter.carryToMachine("pipeRack");
-        this.detachWorkpieceFromWorker(0);
-        this.storeWorkpieceInRack();
-        await transporter.placeDownGesture();
-      }
-
-      // ── Phase 6: Weld sections together (if any) ──
-      for (const weldSectionStep of weldSectionsSteps) {
-        if (!this.isRunning) break;
-        weldSectionStep.status = "in_progress";
-        weldSectionStep.workerId = 4;
-        this.onStateChange?.();
-
-        // Transporter retrieves from rack for assembly welding
-        await transporter.walkToMachine("pipeRack");
-        await transporter.pickUpGesture();
-
-        // Create a simple representation for the assembly weld
-        const assemblyPiece = this.createWorkpiece();
-        this.transformWorkpieceToCylinder(1.0, 2.0);
-        this.attachWorkpieceToWorker(0);
-
-        await transporter.carryToMachine("welder");
-        this.detachWorkpieceFromWorker(0);
-        this.placeWorkpieceAtMachine("welder");
-        await transporter.placeDownGesture();
-
-        await welderWorker.walkToMachine("welder");
-        await Promise.all([
-          welderWorker.operateWelder(),
-          this.triggerMachine("welder", 4000),
-        ]);
-
-        weldSectionStep.status = "completed";
-        this.onStateChange?.();
-
-        // Store welded assembly back in rack
-        await transporter.walkToMachine("welder");
-        await transporter.pickUpGesture();
-        this.attachWorkpieceToWorker(0);
-        await transporter.carryToMachine("pipeRack");
-        this.detachWorkpieceFromWorker(0);
-        this.storeWorkpieceInRack();
-        await transporter.placeDownGesture();
-      }
-    }
-
-    this.isRunning = false;
     this.onStateChange?.();
   }
 
