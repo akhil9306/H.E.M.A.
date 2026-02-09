@@ -15,6 +15,7 @@ import type {
 } from "./types";
 import {
   MACHINE_IDS,
+  MACHINE_APPROACH,
   WORKER_HOME_POSITIONS,
   WORKER_APPROACH_Z,
   WORKPIECE_POSITIONS,
@@ -261,6 +262,12 @@ export class FactoryController {
     this.detachWorkpieceFromWorker(workerId);
     this.placeWorkpieceAtMachine(machineId);
     await worker.placeDownGesture();
+
+    // Step aside so machine operator isn't blocked visually
+    const machinePos = MACHINE_APPROACH[machineId];
+    const standbyPos = new THREE.Vector3(machinePos.x + 3, 0, machinePos.z + 3);
+    await worker.walkTo(standbyPos);
+
     this.onStateChange?.();
     return `Workpiece placed at ${machineId}`;
   }
