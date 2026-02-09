@@ -4,6 +4,8 @@
 
 An intelligent humanoid robot simulation powered by Google Gemini AI with 32 articulated joints, real-time vision, and multi-agent factory orchestration.
 
+![Getting Started](images/getting_started.png)
+
 ## Table of Contents
 
 - [Project Overview](#project-overview)
@@ -23,7 +25,12 @@ H.E.M.A. demonstrates LLM control of physical systems through tool calls, vision
 **Two Operating Modes:**
 
 1. **Chat Mode** - Natural language control of a single humanoid robot with first-person vision, gestures, and object manipulation
+
+![Robotic Chat](images/robotic_chat.png)
+
 2. **Factory Mode** - Multi-agent orchestration of 5 worker robots in an automated pipe manufacturing facility with collision avoidance
+
+![Factory Orchestrator](images/factory_orchestrator.png)
 
 ## Key Features
 
