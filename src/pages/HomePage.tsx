@@ -1,11 +1,9 @@
 import { useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 
-interface Props {
-  onStart: () => void;
-}
-
-export function HomePage({ onStart }: Props) {
-  const handleStart = useCallback(() => onStart(), [onStart]);
+export function HomePage() {
+  const navigate = useNavigate();
+  const handleStart = useCallback(() => navigate("/chat"), [navigate]);
 
   return (
     <div style={styles.container}>

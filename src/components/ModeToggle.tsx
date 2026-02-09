@@ -1,3 +1,5 @@
+import { useNavigate } from "react-router-dom";
+
 export type Mode = "chat" | "orchestrator";
 
 interface ModeToggleProps {
@@ -6,10 +8,17 @@ interface ModeToggleProps {
 }
 
 export function ModeToggle({ mode, onChange }: ModeToggleProps) {
+  const navigate = useNavigate();
+
+  const handleChange = (newMode: Mode) => {
+    onChange(newMode);
+    navigate(newMode === "chat" ? "/chat" : "/orchestrate");
+  };
+
   return (
     <div style={styles.container}>
       <button
-        onClick={() => onChange("chat")}
+        onClick={() => handleChange("chat")}
         style={{
           ...styles.btn,
           ...(mode === "chat" ? styles.active : {}),
@@ -18,7 +27,7 @@ export function ModeToggle({ mode, onChange }: ModeToggleProps) {
         CHAT
       </button>
       <button
-        onClick={() => onChange("orchestrator")}
+        onClick={() => handleChange("orchestrator")}
         style={{
           ...styles.btn,
           ...(mode === "orchestrator" ? styles.active : {}),

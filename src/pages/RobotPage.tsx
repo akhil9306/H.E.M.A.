@@ -27,11 +27,15 @@ const SLIDER_CONFIG: {
   { id: "rightKnee", label: "R Knee", min: 0, max: 150, group: "Legs" },
 ];
 
-export function RobotPage() {
+interface RobotPageProps {
+  initialMode?: Mode;
+}
+
+export function RobotPage({ initialMode = "chat" }: RobotPageProps) {
   const robot = useRobot();
   const containerRef = useRef<HTMLDivElement>(null);
   const visionCanvasRef = useRef<HTMLCanvasElement>(null);
-  const [mode, setMode] = useState<Mode>("chat");
+  const [mode, setMode] = useState<Mode>(initialMode);
   const [jointValues, setJointValues] = useState<Record<JointName, number>>(
     () => {
       const vals: any = {};
