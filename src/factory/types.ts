@@ -36,7 +36,7 @@ export interface PipeSpec {
 }
 
 // ─── Manufacturing ───
-export type MachineId = "sheetStock" | "cutter" | "roller" | "press" | "welder";
+export type MachineId = "sheetStock" | "cutter" | "roller" | "press" | "welder" | "pipeRack";
 
 export const MACHINE_POSITIONS: Record<MachineId, THREE.Vector3> = {
   sheetStock: new THREE.Vector3(-12, 0, 0),
@@ -44,6 +44,7 @@ export const MACHINE_POSITIONS: Record<MachineId, THREE.Vector3> = {
   roller: new THREE.Vector3(0, 0, 0),
   press: new THREE.Vector3(6, 0, 0),
   welder: new THREE.Vector3(12, 0, 0),
+  pipeRack: new THREE.Vector3(18, 0, 0),
 };
 
 // Worker approach positions (offset in Z so robot stands in front of machine)
@@ -53,7 +54,36 @@ export const MACHINE_APPROACH: Record<MachineId, THREE.Vector3> = {
   roller: new THREE.Vector3(0, 0, 4),
   press: new THREE.Vector3(6, 0, 4),
   welder: new THREE.Vector3(12, 0, 4),
+  pipeRack: new THREE.Vector3(18, 0, 4),
 };
+
+// Workpiece placement positions (where material sits on each machine's work surface)
+export const WORKPIECE_POSITIONS: Record<MachineId, THREE.Vector3> = {
+  sheetStock: new THREE.Vector3(-12, 1.0, 0),
+  cutter: new THREE.Vector3(-6, 1.1, 1.5),
+  roller: new THREE.Vector3(0, 1.2, 1.5),
+  press: new THREE.Vector3(6, 1.1, 1.5),
+  welder: new THREE.Vector3(12, 1.1, 1.5),
+  pipeRack: new THREE.Vector3(18, 1.0, 0),
+};
+
+// Ordered list of machine IDs (matches worker assignment order, excludes pipeRack)
+export const MACHINE_IDS: MachineId[] = ["sheetStock", "cutter", "roller", "press", "welder"];
+
+// Worker home positions - each worker stationed near their assigned machine
+export const WORKER_HOME_POSITIONS: Record<MachineId, THREE.Vector3> = {
+  sheetStock: new THREE.Vector3(-12, 0, 6),
+  cutter:     new THREE.Vector3(-6,  0, 6),
+  roller:     new THREE.Vector3( 0,  0, 6),
+  press:      new THREE.Vector3( 6,  0, 6),
+  welder:     new THREE.Vector3( 12, 0, 6),
+};
+
+// Corridor Z position - robots travel along this Z when moving between machines
+export const CORRIDOR_Z = 8;
+
+// Per-worker approach Z offsets to prevent overlap at machines
+export const WORKER_APPROACH_Z: number[] = [3.0, 3.5, 4.0, 4.5, 5.0];
 
 export type StepAction =
   | "fetch_sheet"

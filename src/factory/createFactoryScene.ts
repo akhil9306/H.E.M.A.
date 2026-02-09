@@ -48,8 +48,8 @@ export function createFactoryScene(container: HTMLDivElement): FactorySceneResul
   dirLight1.castShadow = true;
   dirLight1.shadow.mapSize.width = 4096;
   dirLight1.shadow.mapSize.height = 4096;
-  dirLight1.shadow.camera.left = -25;
-  dirLight1.shadow.camera.right = 25;
+  dirLight1.shadow.camera.left = -30;
+  dirLight1.shadow.camera.right = 30;
   dirLight1.shadow.camera.top = 25;
   dirLight1.shadow.camera.bottom = -25;
   dirLight1.shadow.camera.near = 1;
@@ -61,8 +61,8 @@ export function createFactoryScene(container: HTMLDivElement): FactorySceneResul
   dirLight2.position.set(-15, 12, -8);
   scene.add(dirLight2);
 
-  // Factory overhead spot lights
-  for (let i = 0; i < 5; i++) {
+  // Factory overhead spot lights (including pipe rack area)
+  for (let i = 0; i < 6; i++) {
     const spotLight = new THREE.PointLight(0xffeebb, 0.4, 15);
     spotLight.position.set(-12 + i * 6, 8, 0);
     scene.add(spotLight);

@@ -103,7 +103,8 @@ export interface WalkState {
 export function startWalkCycle(
   parts: RobotParts,
   state: WalkState,
-  currentAngles: Record<JointName, number>
+  currentAngles: Record<JointName, number>,
+  carryMode: boolean = false
 ): void {
   if (state.active) return;
   state.active = true;
@@ -145,17 +146,29 @@ export function startWalkCycle(
     currentAngles.leftKnee = lKnee;
     currentAngles.rightKnee = rKnee;
 
-    // Arm counterswing
-    const armSwing = Math.sin(p) * 15;
-    applyJoint(parts, "leftShoulder", armSwing);
-    applyJoint(parts, "rightShoulder", -armSwing);
-    applyJoint(parts, "leftElbow", 10);
-    applyJoint(parts, "rightElbow", 10);
+    if (carryMode) {
+      // Keep arms in carry pose — no counterswing
+      applyJoint(parts, "leftShoulder", -20);
+      applyJoint(parts, "rightShoulder", -20);
+      applyJoint(parts, "leftElbow", 70);
+      applyJoint(parts, "rightElbow", 70);
+      currentAngles.leftShoulder = -20;
+      currentAngles.rightShoulder = -20;
+      currentAngles.leftElbow = 70;
+      currentAngles.rightElbow = 70;
+    } else {
+      // Arm counterswing — opposite arm swings forward with each leg
+      const armSwing = Math.sin(p) * 15;
+      applyJoint(parts, "leftShoulder", -armSwing);
+      applyJoint(parts, "rightShoulder", armSwing);
+      applyJoint(parts, "leftElbow", 10);
+      applyJoint(parts, "rightElbow", 10);
 
-    currentAngles.leftShoulder = armSwing;
-    currentAngles.rightShoulder = -armSwing;
-    currentAngles.leftElbow = 10;
-    currentAngles.rightElbow = 10;
+      currentAngles.leftShoulder = -armSwing;
+      currentAngles.rightShoulder = armSwing;
+      currentAngles.leftElbow = 10;
+      currentAngles.rightElbow = 10;
+    }
 
     // Head stabilization
     parts.head.rotation.z = -Math.sin(p) * 0.015;
@@ -169,12 +182,25 @@ export function startWalkCycle(
 export function stopWalkCycle(
   parts: RobotParts,
   state: WalkState,
-  currentAngles: Record<JointName, number>
+  currentAngles: Record<JointName, number>,
+  carryMode: boolean = false
 ): Promise<void> {
   state.active = false;
   if (state.rafId !== null) {
     cancelAnimationFrame(state.rafId);
     state.rafId = null;
+  }
+
+  if (carryMode) {
+    // Only reset legs and torso, keep arms in carry pose
+    const legJoints: JointName[] = ["leftHip", "leftKnee", "rightHip", "rightKnee"];
+    parts.torso.position.y = 2.3;
+    parts.torso.position.x = 0;
+    parts.torso.rotation.z = 0;
+    parts.head.rotation.z = 0;
+    return Promise.all(
+      legJoints.map((j) => smoothSetJoint(parts, j, 0, 400, currentAngles))
+    ).then(() => {});
   }
 
   // Smoothly return to neutral
@@ -312,14 +338,19 @@ export async function lookAtTarget(
   }
 }
 
+export interface GraspResult {
+  message: string;
+  side: "left" | "right";
+}
+
 // --- Grasp object with smooth IK-approximated reach ---
 export async function graspAnimation(
   parts: RobotParts,
   objectName: GraspableObject,
   currentAngles: Record<JointName, number>
-): Promise<string> {
+): Promise<GraspResult> {
   const obj = OBJECT_POSITIONS[objectName];
-  if (!obj) return `Unknown object: ${objectName}`;
+  if (!obj) return { message: `Unknown object: ${objectName}`, side: "right" };
 
   // Look at the object first
   const headPan = Math.atan2(obj.x, obj.z - 0.5) * (180 / Math.PI);
@@ -330,10 +361,10 @@ export async function graspAnimation(
 
   // Choose arm based on object side
   const useRight = obj.x >= 0;
-  const armPrefix = useRight ? "right" : "left";
-  const shoulderKey = `${armPrefix}Shoulder` as JointName;
-  const elbowKey = `${armPrefix}Elbow` as JointName;
-  const fingersKey = `${armPrefix}Fingers` as JointName;
+  const side: "left" | "right" = useRight ? "right" : "left";
+  const shoulderKey = `${side}Shoulder` as JointName;
+  const elbowKey = `${side}Elbow` as JointName;
+  const fingersKey = `${side}Fingers` as JointName;
 
   // Calculate reach angles using simple 2-link IK approximation
   const dx = obj.x;
@@ -349,7 +380,7 @@ export async function graspAnimation(
     smoothSetJoint(parts, elbowKey, elbowAngle * 0.5, 300, currentAngles),
   ]);
 
-  // Phase 2: Full extension
+  // Phase 2: Full extension toward the object
   await Promise.all([
     smoothSetJoint(parts, shoulderKey, shoulderAngle, 300, currentAngles),
     smoothSetJoint(parts, elbowKey, elbowAngle, 300, currentAngles),
@@ -358,19 +389,13 @@ export async function graspAnimation(
   // Phase 3: Close fingers to grasp
   await smoothSetJoint(parts, fingersKey, 80, 300, currentAngles);
 
-  // Phase 4: Lift slightly
+  // Phase 4: Lift arm up with the object
   await Promise.all([
-    smoothSetJoint(
-      parts,
-      shoulderKey,
-      shoulderAngle + 20,
-      300,
-      currentAngles
-    ),
-    smoothSetJoint(parts, elbowKey, elbowAngle - 10, 300, currentAngles),
+    smoothSetJoint(parts, shoulderKey, -40, 500, currentAngles),
+    smoothSetJoint(parts, elbowKey, 60, 500, currentAngles),
   ]);
 
-  return `Grasped ${obj.color} ${objectName}`;
+  return { message: `Grasped ${obj.color} ${objectName}`, side };
 }
 
 // --- Release object ---

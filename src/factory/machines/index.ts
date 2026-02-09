@@ -10,19 +10,20 @@ import { createGuillotineCutter } from "./createGuillotineCutter";
 import { createRollingMachine, updateRollerMachine } from "./createRollingMachine";
 import { createFrustrumPress, updateFrustrumPress } from "./createFrustrumPress";
 import { createWeldingStation } from "./createWeldingStation";
-import { createConveyors } from "./createConveyors";
+import { createPipeRack, type PipeRackResult } from "./createPipeRack";
 
 export { createMetalSheetStock } from "./createMetalSheetStock";
 export { createGuillotineCutter } from "./createGuillotineCutter";
 export { createRollingMachine, updateRollerMachine } from "./createRollingMachine";
 export { createFrustrumPress, updateFrustrumPress } from "./createFrustrumPress";
 export { createWeldingStation } from "./createWeldingStation";
-export { createConveyors } from "./createConveyors";
+export { createPipeRack, type PipeRackResult } from "./createPipeRack";
 
 export interface MachinesResult {
   groups: Record<string, THREE.Group>;
   animParts: FactoryAnimParts;
   dynamicParts: FactoryDynamicParts;
+  pipeRack: PipeRackResult;
 }
 
 export function createAllMachines(
@@ -60,7 +61,8 @@ export function createAllMachines(
   groups.roller = createRollingMachine(scene, params.roller, dynamicParts);
   groups.frustrumPress = createFrustrumPress(scene, params.press, animParts, dynamicParts);
   groups.weldingStation = createWeldingStation(scene, animParts);
-  createConveyors(scene);
+  const pipeRack = createPipeRack(scene);
+  groups.pipeRack = pipeRack.group;
 
-  return { groups, animParts, dynamicParts };
+  return { groups, animParts, dynamicParts, pipeRack };
 }

@@ -5,17 +5,28 @@ import { OrchestrationStatus } from "@/components/OrchestrationStatus";
 import { breakdownPipeSpec } from "@/factory/pipeBreakdown";
 import type { PipeSpec, ManufacturingStep, WorkerState, MachineId } from "@/factory/types";
 
-interface OrchestratorToolCall {
+interface ToolCall {
   name: string;
   args: Record<string, any>;
 }
 
-interface OrchestratorApiResponse {
+interface ApiResponse {
   type: "text" | "tool_calls" | "error";
   text?: string;
-  calls?: OrchestratorToolCall[];
+  calls?: ToolCall[];
   error?: string;
+  retryAfter?: number;
 }
+
+const WORKER_MAX_ITERATIONS = 20;
+
+const WORKER_NAMES: Record<number, string> = {
+  0: "Transporter",
+  1: "Cutter Op",
+  2: "Roller Op",
+  3: "Press Op",
+  4: "Welder",
+};
 
 export function OrchestratorView() {
   const factory = useFactory();
@@ -24,7 +35,7 @@ export function OrchestratorView() {
   const [workers, setWorkers] = useState<WorkerState[]>([]);
   const [isBuilding, setIsBuilding] = useState(false);
   const [messages, setMessages] = useState<string[]>([]);
-  const [sessionId] = useState(() => crypto.randomUUID());
+  const [orchestratorSessionId] = useState(() => crypto.randomUUID());
 
   useEffect(() => {
     if (containerRef.current) {
@@ -34,7 +45,6 @@ export function OrchestratorView() {
         setSteps([...state.steps]);
         setWorkers([...state.workers]);
       });
-      // Get initial worker state
       setWorkers(factory.getState().workers);
     }
     return () => factory.dispose();
@@ -44,8 +54,207 @@ export function OrchestratorView() {
     setMessages((prev) => [...prev, msg]);
   }, []);
 
+  // ─── Worker Inner Loop ───
+  // Dispatches a task to a worker AI, runs its tool call loop until it reports done.
+
+  const runWorkerTask = useCallback(
+    async (workerId: number, taskDescription: string): Promise<string> => {
+      const workerSessionId = crypto.randomUUID();
+      const workerName = WORKER_NAMES[workerId] || `Worker ${workerId}`;
+      addMessage(`[${workerName}] Task: ${taskDescription}`);
+
+      try {
+        // Send initial task to worker AI
+        const initResp = await fetch("/api/worker", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message: taskDescription,
+            sessionId: workerSessionId,
+            workerId,
+          }),
+        });
+        let data: ApiResponse = await initResp.json();
+
+        for (let iteration = 0; iteration < WORKER_MAX_ITERATIONS; iteration++) {
+          if (data.type === "error") {
+            if (data.retryAfter) {
+              addMessage(`[${workerName}] Rate limited, waiting ${Math.ceil(data.retryAfter / 1000)}s...`);
+              await new Promise((r) => setTimeout(r, data.retryAfter!));
+              // Retry the same message
+              const retryResp = await fetch("/api/worker", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  message: "Please continue with your task.",
+                  sessionId: workerSessionId,
+                  workerId,
+                }),
+              });
+              data = await retryResp.json();
+              continue;
+            }
+            addMessage(`[${workerName}] Error: ${data.error}`);
+            return `Worker error: ${data.error}`;
+          }
+
+          if (data.type === "text") {
+            addMessage(`[${workerName}] ${data.text}`);
+            return data.text || "Worker completed (no summary)";
+          }
+
+          if (data.type === "tool_calls" && data.calls) {
+            const toolResults: Array<{ name: string; response: string; imageData?: string }> = [];
+
+            for (const call of data.calls) {
+              let result = "";
+              let imageData: string | undefined;
+
+              switch (call.name) {
+                case "walkToMachine":
+                  result = await factory.moveWorkerToMachine(workerId, call.args.machineId as MachineId);
+                  addMessage(`[${workerName}] Walking to ${call.args.machineId}`);
+                  break;
+
+                case "captureVision":
+                  imageData = factory.captureVision(workerId);
+                  result = imageData ? "Vision captured successfully. Image attached." : "Vision capture failed.";
+                  addMessage(`[${workerName}] Capturing vision...`);
+                  break;
+
+                case "getWorkerStatus":
+                  result = JSON.stringify(factory.getState().workers[workerId] || {});
+                  break;
+
+                // ─── Transporter tools ───
+                case "pickUpSheet":
+                  result = await factory.fetchSheet(workerId);
+                  addMessage(`[${workerName}] Picking up fresh sheet`);
+                  break;
+
+                case "pickUpWorkpiece":
+                  result = await factory.pickUpFrom(workerId, call.args.machineId as MachineId);
+                  addMessage(`[${workerName}] Picking up workpiece from ${call.args.machineId}`);
+                  break;
+
+                case "placeWorkpiece":
+                  result = await factory.carryAndPlace(workerId, call.args.machineId as MachineId);
+                  addMessage(`[${workerName}] Placing workpiece at ${call.args.machineId}`);
+                  break;
+
+                case "storeInRack":
+                  result = await factory.storeInRackFromWorker(workerId);
+                  addMessage(`[${workerName}] Storing pipe in rack`);
+                  break;
+
+                // ─── Machine operator tools ───
+                case "operateCutter":
+                  result = await factory.operateMachineWithWorker(workerId, "cutter");
+                  addMessage(`[${workerName}] Operating cutter`);
+                  break;
+
+                case "setRollerParams":
+                  factory.setRollerParams({
+                    diameter: call.args.diameter,
+                    height: call.args.height,
+                  });
+                  result = `Roller params set: diameter=${call.args.diameter}m, height=${call.args.height}m`;
+                  addMessage(`[${workerName}] Setting roller: dia=${call.args.diameter}m, h=${call.args.height}m`);
+                  break;
+
+                case "operateRoller":
+                  result = await factory.operateMachineWithWorker(workerId, "roller");
+                  addMessage(`[${workerName}] Operating roller`);
+                  break;
+
+                case "setPressParams":
+                  factory.setPressParams({
+                    topRadius: call.args.topRadius,
+                    bottomRadius: call.args.bottomRadius,
+                    frustrumHeight: call.args.frustrumHeight,
+                  });
+                  result = `Press params set: top=${call.args.topRadius}m, bottom=${call.args.bottomRadius}m, h=${call.args.frustrumHeight}m`;
+                  addMessage(`[${workerName}] Setting press: top=${call.args.topRadius}m, btm=${call.args.bottomRadius}m`);
+                  break;
+
+                case "operatePress":
+                  result = await factory.operateMachineWithWorker(workerId, "press");
+                  addMessage(`[${workerName}] Operating press`);
+                  break;
+
+                case "operateWelder":
+                  result = await factory.operateMachineWithWorker(workerId, "welder");
+                  addMessage(`[${workerName}] Operating welder`);
+                  break;
+
+                // ─── Reporting tools ───
+                case "reportTaskComplete":
+                  addMessage(`[${workerName}] Done: ${call.args.summary}`);
+                  // Clean up worker session
+                  fetch("/api/worker/reset", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ sessionId: workerSessionId }),
+                  }).catch(() => {});
+                  return call.args.summary || "Task completed";
+
+                case "reportProblem":
+                  addMessage(`[${workerName}] PROBLEM: ${call.args.problem}`);
+                  fetch("/api/worker/reset", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ sessionId: workerSessionId }),
+                  }).catch(() => {});
+                  return `Worker reported problem: ${call.args.problem}`;
+
+                default:
+                  result = `Unknown tool: ${call.name}`;
+              }
+
+              const toolResult: { name: string; response: string; imageData?: string } = {
+                name: call.name,
+                response: result,
+              };
+              if (imageData) {
+                toolResult.imageData = imageData;
+              }
+              toolResults.push(toolResult);
+            }
+
+            // Send tool results back to worker AI
+            const nextResp = await fetch("/api/worker", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                sessionId: workerSessionId,
+                workerId,
+                toolResults,
+              }),
+            });
+            data = await nextResp.json();
+          }
+        }
+
+        // Max iterations reached
+        addMessage(`[${workerName}] Max iterations reached`);
+        fetch("/api/worker/reset", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId: workerSessionId }),
+        }).catch(() => {});
+        return "Worker task timed out (max iterations)";
+      } catch (err: any) {
+        addMessage(`[${workerName}] Error: ${err.message}`);
+        return `Worker error: ${err.message}`;
+      }
+    },
+    [factory, addMessage]
+  );
+
+  // ─── Orchestrator Outer Loop ───
+
   const executeOrchestratorToolCalls = useCallback(
-    async (calls: OrchestratorToolCall[]): Promise<Array<{ name: string; response: string }>> => {
+    async (calls: ToolCall[]): Promise<Array<{ name: string; response: string }>> => {
       const results: Array<{ name: string; response: string }> = [];
 
       for (const call of calls) {
@@ -53,68 +262,51 @@ export function OrchestratorView() {
 
         switch (call.name) {
           case "planManufacturing":
-            result = `Manufacturing plan acknowledged: ${call.args.summary}`;
-            addMessage(`Plan: ${call.args.summary}`);
+            result = `Plan acknowledged: ${call.args.summary}. ${call.args.stepCount} steps, ${call.args.estimatedSegments} segments.`;
+            addMessage(`Orchestrator Plan: ${call.args.summary}`);
             break;
 
-          case "assignWorkerToStep": {
-            const step = steps.find((s) => s.id === call.args.stepId);
-            if (step) {
-              step.workerId = call.args.workerId;
-              setSteps([...steps]);
-              result = `Worker ${call.args.workerId} assigned to step ${call.args.stepId}`;
-            } else {
-              result = `Step ${call.args.stepId} not found`;
-            }
-            break;
-          }
+          case "dispatchWorkerTask": {
+            const { workerId, taskDescription, relatedStepId } = call.args;
+            addMessage(`Dispatching to Worker ${workerId}: ${taskDescription.substring(0, 80)}...`);
 
-          case "moveWorkerToMachine":
-            result = await factory.moveWorkerToMachine(
-              call.args.workerId,
-              call.args.machineId as MachineId
-            );
-            addMessage(`Worker ${call.args.workerId} moved to ${call.args.machineId}`);
-            break;
+            // Update step status
+            setSteps((prev) => {
+              const updated = [...prev];
+              const step = updated.find((s) => s.id === relatedStepId);
+              if (step) {
+                step.status = "in_progress";
+                step.workerId = workerId;
+              }
+              return updated;
+            });
 
-          case "setMachineParameters":
-            if (call.args.machineId === "roller") {
-              factory.setRollerParams({
-                diameter: call.args.diameter || 1.0,
-                height: call.args.height || 3.0,
-              });
-              result = `Roller set: dia=${call.args.diameter}m, h=${call.args.height}m`;
-            } else if (call.args.machineId === "press") {
-              factory.setPressParams({
-                topRadius: call.args.topRadius || 0.4,
-                bottomRadius: call.args.bottomRadius || 0.6,
-                frustrumHeight: call.args.frustrumHeight || 0.8,
-              });
-              result = `Press set: top=${call.args.topRadius}m, btm=${call.args.bottomRadius}m, h=${call.args.frustrumHeight}m`;
-            } else {
-              result = `Machine ${call.args.machineId} has no adjustable parameters`;
-            }
-            addMessage(result);
-            break;
+            // Run the inner worker AI loop — this blocks until the worker finishes
+            const workerResult = await runWorkerTask(workerId, taskDescription);
 
-          case "executeMachineOperation":
-            addMessage(`Operating ${call.args.machineId}: ${call.args.operationDescription}`);
-            result = await factory.triggerMachine(call.args.machineId as MachineId);
-            break;
+            // Mark step as completed
+            setSteps((prev) => {
+              const updated = [...prev];
+              const step = updated.find((s) => s.id === relatedStepId);
+              if (step) {
+                step.status = workerResult.includes("problem") || workerResult.includes("error")
+                  ? "failed"
+                  : "completed";
+              }
+              return updated;
+            });
 
-          case "reportStepComplete": {
-            const completedStep = steps.find((s) => s.id === call.args.stepId);
-            if (completedStep) {
-              completedStep.status = "completed";
-              setSteps([...steps]);
-            }
-            result = `Step ${call.args.stepId} marked complete: ${call.args.result}`;
-            addMessage(`Completed: ${call.args.result}`);
+            result = `Worker ${workerId} finished: ${workerResult}`;
             break;
           }
 
           case "getFactoryStatus":
             result = JSON.stringify(factory.getState(), null, 2);
+            break;
+
+          case "reportManufacturingComplete":
+            result = `Manufacturing complete: ${call.args.summary}`;
+            addMessage(`MANUFACTURING COMPLETE: ${call.args.summary}`);
             break;
 
           default:
@@ -126,13 +318,29 @@ export function OrchestratorView() {
 
       return results;
     },
-    [factory, steps, addMessage]
+    [factory, addMessage, runWorkerTask]
   );
 
   const handleOrchestratorResponse = useCallback(
-    async (data: OrchestratorApiResponse): Promise<void> => {
+    async (data: ApiResponse): Promise<void> => {
       if (data.type === "error") {
-        addMessage(`Error: ${data.error}`);
+        if (data.retryAfter) {
+          addMessage(`Orchestrator rate limited, waiting ${Math.ceil(data.retryAfter / 1000)}s...`);
+          await new Promise((r) => setTimeout(r, data.retryAfter!));
+          // Re-prompt
+          const resp = await fetch("/api/orchestrator", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              message: "Please continue coordinating the manufacturing.",
+              sessionId: orchestratorSessionId,
+            }),
+          });
+          const nextData: ApiResponse = await resp.json();
+          await handleOrchestratorResponse(nextData);
+          return;
+        }
+        addMessage(`Orchestrator Error: ${data.error}`);
         return;
       }
 
@@ -148,16 +356,19 @@ export function OrchestratorView() {
           const resp = await fetch("/api/orchestrator", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ sessionId, toolResults: results }),
+            body: JSON.stringify({
+              sessionId: orchestratorSessionId,
+              toolResults: results,
+            }),
           });
-          const nextData: OrchestratorApiResponse = await resp.json();
+          const nextData: ApiResponse = await resp.json();
           await handleOrchestratorResponse(nextData);
         } catch (err: any) {
           addMessage(`Error: ${err.message}`);
         }
       }
     },
-    [addMessage, executeOrchestratorToolCalls, sessionId]
+    [addMessage, executeOrchestratorToolCalls, orchestratorSessionId]
   );
 
   const handleBuildPipe = useCallback(
@@ -172,9 +383,14 @@ export function OrchestratorView() {
 
       addMessage(`Generated ${mfgSteps.length} manufacturing steps`);
 
-      // Build the message for the orchestrator LLM
+      // Build the message for the orchestrator LLM — include full step details with params
       const stepsDescription = mfgSteps
-        .map((s) => `- ${s.id}: [${s.machineId}] ${s.description}`)
+        .map((s) => {
+          const paramStr = Object.entries(s.params)
+            .map(([k, v]) => `${k}=${v}`)
+            .join(", ");
+          return `- ${s.id}: [${s.machineId}] ${s.description} (params: ${paramStr})`;
+        })
         .join("\n");
 
       const orchestratorMessage = `New pipe order received:
@@ -185,27 +401,29 @@ export function OrchestratorView() {
 Manufacturing steps have been pre-computed:
 ${stepsDescription}
 
-Please coordinate the 2 worker robots to execute these ${mfgSteps.length} steps. Start by planning the manufacturing, then begin executing steps. Use both workers efficiently.`;
+Please coordinate the 5 worker robots to execute these ${mfgSteps.length} steps. Each worker has its own AI brain and will execute tasks autonomously using tool calls. You dispatch high-level tasks to workers using dispatchWorkerTask, and each worker figures out the details (walking, operating, verifying with vision).
+
+Start by calling planManufacturing, then dispatch workers in sequence for each segment through the pipeline. Remember: Worker 0 (Transporter) handles ALL material movement. Workers 1-4 operate their respective machines. Include specific dimensions in your task descriptions so workers know what parameters to set.`;
 
       try {
         const resp = await fetch("/api/orchestrator", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: orchestratorMessage, sessionId }),
+          body: JSON.stringify({
+            message: orchestratorMessage,
+            sessionId: orchestratorSessionId,
+          }),
         });
-        const data: OrchestratorApiResponse = await resp.json();
+        const data: ApiResponse = await resp.json();
         await handleOrchestratorResponse(data);
       } catch (err: any) {
         addMessage(`Error starting orchestration: ${err.message}`);
       }
 
-      // Also execute the steps locally in sequence
-      await factory.executeAllSteps();
-
       setIsBuilding(false);
-      addMessage("Manufacturing complete!");
+      addMessage("Manufacturing session ended.");
     },
-    [factory, sessionId, addMessage, handleOrchestratorResponse]
+    [factory, orchestratorSessionId, addMessage, handleOrchestratorResponse]
   );
 
   return (

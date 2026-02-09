@@ -23,6 +23,7 @@ import {
   type RobotParts,
   type RobotState,
   JOINT_LIMITS,
+  OBJECT_POSITIONS,
 } from "./types";
 
 export class RobotController {
@@ -33,6 +34,7 @@ export class RobotController {
   private parts!: RobotParts;
   private robot!: THREE.Group;
   private tableObjects: THREE.Mesh[] = [];
+  private objectMap: Record<string, THREE.Mesh> = {};
   private animFrameId: number | null = null;
   private initialized = false;
   private container: HTMLDivElement | null = null;
@@ -46,6 +48,11 @@ export class RobotController {
 
   private walkState: WalkState = { active: false, phase: 0, rafId: null };
   private graspedObject: GraspableObject | null = null;
+  private graspedMesh: THREE.Mesh | null = null;
+  private graspSide: "left" | "right" = "right";
+  private originalObjectParent: THREE.Object3D | null = null;
+  private originalObjectPos = new THREE.Vector3();
+  private originalObjectRot = new THREE.Euler();
   private onStateChange?: () => void;
 
   setOnStateChange(cb: () => void) {
@@ -63,6 +70,7 @@ export class RobotController {
     this.renderer = setup.renderer;
     this.visionRenderer = setup.visionRenderer;
     this.tableObjects = setup.tableObjects;
+    this.objectMap = setup.objectMap;
 
     const { robot, parts } = createRobot(this.scene);
     this.robot = robot;
@@ -162,6 +170,17 @@ export class RobotController {
         if (this.walkState.active) {
           await stopWalkCycle(this.parts, this.walkState, this.currentAngles);
         }
+        // Return any held object to its original position
+        if (this.graspedMesh && this.graspedObject) {
+          this.graspedMesh.removeFromParent();
+          const parent = this.originalObjectParent || this.scene;
+          parent.add(this.graspedMesh);
+          this.graspedMesh.position.copy(this.originalObjectPos);
+          this.graspedMesh.rotation.copy(this.originalObjectRot);
+          this.graspedMesh.scale.setScalar(1);
+          this.graspedMesh = null;
+          this.originalObjectParent = null;
+        }
         await resetToNeutral(this.parts, this.currentAngles);
         this.graspedObject = null;
         this.onStateChange?.();
@@ -176,14 +195,71 @@ export class RobotController {
     if (this.walkState.active) {
       await stopWalkCycle(this.parts, this.walkState, this.currentAngles);
     }
+
     const result = await graspAnimation(this.parts, objectName, this.currentAngles);
     this.graspedObject = objectName;
+    this.graspSide = result.side;
+
+    // Attach the actual 3D mesh to the robot's hand
+    const mesh = this.objectMap[objectName];
+    if (mesh) {
+      // Save original transform so we can restore on release
+      this.originalObjectParent = mesh.parent;
+      this.originalObjectPos.copy(mesh.position);
+      this.originalObjectRot.copy(mesh.rotation);
+
+      // Get the hand group to attach to
+      const hand = this.graspSide === "right" ? this.parts.rightHand : this.parts.leftHand;
+
+      // Convert mesh world position to hand's local space — but we want it
+      // centered in the palm, so just place it at a fixed offset in hand-local coords
+      hand.updateMatrixWorld(true);
+      mesh.removeFromParent();
+      hand.add(mesh);
+
+      // Position the object in the palm (hand local coords: y goes down the arm)
+      mesh.position.set(0, -0.15, 0);
+      mesh.rotation.set(0, 0, 0);
+      // Scale down slightly so it looks held
+      mesh.scale.setScalar(0.9);
+
+      this.graspedMesh = mesh;
+    }
+
     this.onStateChange?.();
-    return result;
+    return result.message;
   }
 
   async releaseObject(): Promise<string> {
     if (!this.graspedObject) return "No object currently held";
+
+    // Get the current world position of the held object before detaching
+    if (this.graspedMesh) {
+      this.graspedMesh.updateMatrixWorld(true);
+      const worldPos = new THREE.Vector3();
+      this.graspedMesh.getWorldPosition(worldPos);
+
+      // Reparent back to original parent (the scene)
+      this.graspedMesh.removeFromParent();
+      const parent = this.originalObjectParent || this.scene;
+      parent.add(this.graspedMesh);
+
+      // Place it at the world position where it was released
+      // If released near the table, snap to table surface
+      const tableY = 2.32; // table surface height
+      const objInfo = OBJECT_POSITIONS[this.graspedObject];
+      if (worldPos.y < tableY + 0.5) {
+        // Near table — place on table surface
+        worldPos.y = objInfo ? objInfo.y : tableY + 0.15;
+      }
+      this.graspedMesh.position.copy(worldPos);
+      this.graspedMesh.rotation.copy(this.originalObjectRot);
+      this.graspedMesh.scale.setScalar(1);
+
+      this.graspedMesh = null;
+      this.originalObjectParent = null;
+    }
+
     const result = await releaseAnimation(this.parts, this.currentAngles);
     this.graspedObject = null;
     this.onStateChange?.();
