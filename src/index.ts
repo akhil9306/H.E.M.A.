@@ -17,6 +17,7 @@ if (!GEMINI_API_KEY) {
 }
 
 const server = serve({
+  port: process.env.PORT || 3000,
   routes: {
     "/*": index,
 
